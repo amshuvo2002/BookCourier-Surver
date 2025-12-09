@@ -1,16 +1,195 @@
-const express = require('express')
-const cors = require ("cors")
-const app = express()
-require('dotenv').config()
-const port = process.env.port || 3000
+// index.js
+const express = require("express");
+const cors = require("cors");
+const dotenv = require("dotenv");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
-app.use(express.json())
-app.use(cors())
+dotenv.config();
+const app = express();
+const port = process.env.PORT || 3000;
 
-app.get('/', (req, res) => {
-  res.send('Hello World!')
-})
+// Middleware
+app.use(cors());
+app.use(express.json());
 
-app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`)
-})
+// MongoDB connection
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.sxesek9.mongodb.net/?retryWrites=true&w=majority`;
+const client = new MongoClient(uri, {
+  serverApi: {
+    version: ServerApiVersion.v1,
+    strict: true,
+    deprecationErrors: true,
+  },
+});
+
+async function run() {
+  try {
+    await client.connect();
+    const db = client.db("libraryDB");
+
+    const usersCollection = db.collection("users");
+    const booksCollection = db.collection("books");
+    const ordersCollection = db.collection("orders");
+
+    console.log("MongoDB connected");
+
+    // ===== Test Route =====
+    app.get("/", (req, res) => res.send("Library API running"));
+
+    // ===== Users Routes =====
+    app.get("/users", async (req, res) => {
+      const users = await usersCollection.find().toArray();
+      res.send(users);
+    });
+
+    app.get("/users/:id", async (req, res) => {
+      const id = req.params.id;
+      try {
+        let user = null;
+        if (ObjectId.isValid(id)) {
+          user = await usersCollection.findOne({ _id: new ObjectId(id) });
+        }
+        if (!user) {
+          user = await usersCollection.findOne({ _id: id });
+        }
+        if (!user) return res.status(404).send({ message: "User not found" });
+        res.send(user);
+      } catch (err) {
+        res
+          .status(400)
+          .send({ message: "Invalid user ID", error: err.message });
+      }
+    });
+
+    app.post("/users", async (req, res) => {
+      const newUser = req.body;
+      const existing = await usersCollection.findOne({ email: newUser.email });
+      if (existing)
+        return res.status(400).send({ message: "User already exists" });
+      const result = await usersCollection.insertOne(newUser);
+      res.send(result);
+    });
+
+    // ===== Books Routes =====
+    app.get("/books", async (req, res) => {
+      const books = await booksCollection.find().toArray();
+      res.send(books);
+    });
+
+    app.get("/books/:id", async (req, res) => {
+      const id = req.params.id;
+      try {
+        let book = null;
+        if (ObjectId.isValid(id)) {
+          book = await booksCollection.findOne({ _id: new ObjectId(id) });
+        }
+        if (!book) {
+          book = await booksCollection.findOne({ _id: id });
+        }
+        if (!book) return res.status(404).send({ message: "Book not found" });
+        res.send(book);
+      } catch (err) {
+        res
+          .status(400)
+          .send({ message: "Invalid book ID", error: err.message });
+      }
+    });
+
+    app.post("/books", async (req, res) => {
+      const book = req.body;
+      const result = await booksCollection.insertOne(book);
+      res.send(result);
+    });
+
+    // ===== Orders Routes =====
+    app.get("/orders", async (req, res) => {
+      const orders = await ordersCollection.find().toArray();
+      res.send(orders);
+    });
+
+    // Get orders by user email (supports email or userEmail field)
+    app.get("/orders/:email", async (req, res) => {
+      const email = req.params.email;
+      try {
+        const orders = await ordersCollection
+          .find({ $or: [{ email }, { userEmail: email }] })
+          .toArray();
+        res.send(orders);
+      } catch (err) {
+        console.error("Failed to fetch orders:", err);
+        res
+          .status(500)
+          .send({ message: "Failed to fetch orders", error: err.message });
+      }
+    });
+
+    // Post new order
+    app.post("/orders", async (req, res) => {
+      const order = req.body;
+      const result = await ordersCollection.insertOne(order);
+      res.send(result);
+    });
+
+    // Cancel order
+    app.patch("/orders/cancel/:id", async (req, res) => {
+      const id = req.params.id;
+      try {
+        const result = await ordersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: "cancelled" } }
+        );
+        res.send(result);
+      } catch (err) {
+        res
+          .status(400)
+          .send({ message: "Failed to cancel order", error: err.message });
+      }
+    });
+
+    // Pay order
+    app.patch("/orders/pay/:id", async (req, res) => {
+      const id = req.params.id;
+      try {
+        const result = await ordersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: "success", paymentStatus: "paid" } }
+        );
+        res.send(result);
+      } catch (err) {
+        res
+          .status(400)
+          .send({ message: "Failed to pay order", error: err.message });
+      }
+    });
+
+    // ===== Invoices Route =====
+    app.get("/invoices/:email", async (req, res) => {
+      const email = req.params.email;
+      try {
+        const invoices = await client
+          .db("libraryDB")
+          .collection("invoices")
+          .find({ $or: [{ email }, { userEmail: email }] }) // user-specific
+          .toArray();
+        res.send(invoices);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Failed to fetch invoices" });
+      }
+    });
+
+    // ===== Role-based check example =====
+    app.get("/dashboard/:role", async (req, res) => {
+      const role = req.params.role; // user, librarian, admin
+      const users = await usersCollection.find({ role }).toArray();
+      res.send({ message: `Dashboard data for ${role}`, data: users });
+    });
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+run().catch(console.dir);
+
+// Start server
+app.listen(port, () => console.log(`Server running on port ${port}`));
