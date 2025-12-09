@@ -30,6 +30,7 @@ async function run() {
     const usersCollection = db.collection("users");
     const booksCollection = db.collection("books");
     const ordersCollection = db.collection("orders");
+    const invoicesCollection = db.collection("invoices");
 
     console.log("MongoDB connected");
 
@@ -107,7 +108,19 @@ async function run() {
       res.send(orders);
     });
 
-    // Get orders by user email (supports email or userEmail field)
+    app.get("/orders/id/:id", async (req, res) => {
+      const id = req.params.id;
+      try {
+        const order = await ordersCollection.findOne({ _id: new ObjectId(id) });
+        if (!order) return res.status(404).send({ message: "Order not found" });
+        res.send(order);
+      } catch (err) {
+        res
+          .status(400)
+          .send({ message: "Invalid order ID", error: err.message });
+      }
+    });
+
     app.get("/orders/:email", async (req, res) => {
       const email = req.params.email;
       try {
@@ -116,27 +129,40 @@ async function run() {
           .toArray();
         res.send(orders);
       } catch (err) {
-        console.error("Failed to fetch orders:", err);
         res
           .status(500)
           .send({ message: "Failed to fetch orders", error: err.message });
       }
     });
 
-    // Post new order
     app.post("/orders", async (req, res) => {
       const order = req.body;
       const result = await ordersCollection.insertOne(order);
       res.send(result);
     });
 
+    app.delete("/orders/:id", async (req, res) => {
+      const id = req.params.id;
+      try {
+        const _id = ObjectId.isValid(id) ? new ObjectId(id) : id;
+        const result = await ordersCollection.deleteOne({ _id });
+        res.send(result);
+      } catch (err) {
+        res
+          .status(400)
+          .send({ message: "Failed to delete order", error: err.message });
+      }
+    });
+
     // Cancel order
     app.patch("/orders/cancel/:id", async (req, res) => {
       const id = req.params.id;
+      const { status = "cancelled" } = req.body;
       try {
+        const _id = ObjectId.isValid(id) ? new ObjectId(id) : id;
         const result = await ordersCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { status: "cancelled" } }
+          { _id },
+          { $set: { status } }
         );
         res.send(result);
       } catch (err) {
@@ -146,41 +172,55 @@ async function run() {
       }
     });
 
-    // Pay order
+    // Pay order + generate paymentId + create invoice
     app.patch("/orders/pay/:id", async (req, res) => {
       const id = req.params.id;
       try {
-        const result = await ordersCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { status: "success", paymentStatus: "paid" } }
+        const _id = ObjectId.isValid(id) ? new ObjectId(id) : id;
+
+        const paymentId = `PAY-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+        await ordersCollection.updateOne(
+          { _id },
+          { $set: { status: "success", paymentStatus: "paid", paymentId } }
         );
-        res.send(result);
+
+        const paidOrder = await ordersCollection.findOne({ _id });
+
+        await invoicesCollection.insertOne({
+          orderId: paidOrder._id,
+          userId: paidOrder.userId,
+          userName: paidOrder.userName,
+          email: paidOrder.email,
+          bookTitle: paidOrder.bookTitle,
+          price: paidOrder.price,
+          paymentId,
+          orderDate: paidOrder.orderDate || new Date(),
+          paidAt: new Date(),
+        });
+
+        res.send({ message: "Payment successful", paymentId });
       } catch (err) {
-        res
-          .status(400)
-          .send({ message: "Failed to pay order", error: err.message });
+        res.status(400).send({ message: "Failed to pay order", error: err.message });
       }
     });
 
-    // ===== Invoices Route =====
+    // Invoices
     app.get("/invoices/:email", async (req, res) => {
       const email = req.params.email;
       try {
-        const invoices = await client
-          .db("libraryDB")
-          .collection("invoices")
-          .find({ $or: [{ email }, { userEmail: email }] }) // user-specific
+        const invoices = await invoicesCollection
+          .find({ $or: [{ email }, { userEmail: email }] })
           .toArray();
         res.send(invoices);
       } catch (err) {
-        console.error(err);
         res.status(500).send({ message: "Failed to fetch invoices" });
       }
     });
 
-    // ===== Role-based check example =====
+    // Dashboard role
     app.get("/dashboard/:role", async (req, res) => {
-      const role = req.params.role; // user, librarian, admin
+      const role = req.params.role;
       const users = await usersCollection.find({ role }).toArray();
       res.send({ message: `Dashboard data for ${role}`, data: users });
     });
@@ -191,5 +231,4 @@ async function run() {
 
 run().catch(console.dir);
 
-// Start server
 app.listen(port, () => console.log(`Server running on port ${port}`));
