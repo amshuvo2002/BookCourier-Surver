@@ -27,51 +27,82 @@ async function run() {
     await client.connect();
     const db = client.db("libraryDB");
 
-    const usersCollection = db.collection("users");
+    // Collections
+    const usersCollection = db.collection("User"); // main User collection
     const booksCollection = db.collection("books");
     const ordersCollection = db.collection("orders");
     const invoicesCollection = db.collection("invoices");
+    const deliveryCollection = db.collection("deliveryRequests");
 
     console.log("MongoDB connected");
 
     // ===== Test Route =====
     app.get("/", (req, res) => res.send("Library API running"));
 
-    // ===== Users Routes =====
-    app.get("/users", async (req, res) => {
-      const users = await usersCollection.find().toArray();
-      res.send(users);
-    });
+    // =====================================================
+    //                   REGISTER
+    // =====================================================
+    app.post("/register", async (req, res) => {
+      const { name, email, password } = req.body;
+      const existingUser = await usersCollection.findOne({ email });
+      if (existingUser) return res.status(400).send({ message: "User already exists" });
 
-    app.get("/users/:id", async (req, res) => {
-      const id = req.params.id;
-      try {
-        let user = null;
-        if (ObjectId.isValid(id)) {
-          user = await usersCollection.findOne({ _id: new ObjectId(id) });
+      const result = await usersCollection.insertOne({
+        name,
+        email,
+        password, // ideally hashed
+        role: "user",
+        createdAt: new Date()
+      });
+
+      res.send({
+        message: "User registered successfully",
+        user: {
+          name,
+          email,
+          role: "user"
         }
-        if (!user) {
-          user = await usersCollection.findOne({ _id: id });
+      });
+    });
+
+    // =====================================================
+    //                   LOGIN
+    // =====================================================
+    app.post("/login", async (req, res) => {
+      const { email, password } = req.body;
+      const user = await usersCollection.findOne({ email });
+
+      if (!user) return res.status(400).send({ message: "User not found" });
+      if (user.password !== password) return res.status(400).send({ message: "Incorrect password" });
+
+      res.send({
+        message: "Login successful",
+        user: {
+          name: user.name,
+          email: user.email,
+          role: user.role
         }
-        if (!user) return res.status(404).send({ message: "User not found" });
-        res.send(user);
-      } catch (err) {
-        res
-          .status(400)
-          .send({ message: "Invalid user ID", error: err.message });
-      }
+      });
     });
 
-    app.post("/users", async (req, res) => {
-      const newUser = req.body;
-      const existing = await usersCollection.findOne({ email: newUser.email });
-      if (existing)
-        return res.status(400).send({ message: "User already exists" });
-      const result = await usersCollection.insertOne(newUser);
-      res.send(result);
+    // =====================================================
+    //                   GET USER INFO
+    // =====================================================
+    app.get("/users/info/:email", async (req, res) => {
+      const email = req.params.email;
+      const user = await usersCollection.findOne({ email });
+      if (!user) return res.status(404).send({ message: "User not found" });
+
+      res.send({
+        name: user.name,
+        email: user.email,
+        role: user.role
+      });
     });
 
-    // ===== Books Routes =====
+    // =====================================================
+    //                   BOOKS ROUTES
+    // =====================================================
     app.get("/books", async (req, res) => {
       const books = await booksCollection.find().toArray();
       res.send(books);
@@ -81,18 +112,12 @@ async function run() {
       const id = req.params.id;
       try {
         let book = null;
-        if (ObjectId.isValid(id)) {
-          book = await booksCollection.findOne({ _id: new ObjectId(id) });
-        }
-        if (!book) {
-          book = await booksCollection.findOne({ _id: id });
-        }
+        if (ObjectId.isValid(id)) book = await booksCollection.findOne({ _id: new ObjectId(id) });
+        if (!book) book = await booksCollection.findOne({ _id: id });
         if (!book) return res.status(404).send({ message: "Book not found" });
         res.send(book);
       } catch (err) {
-        res
-          .status(400)
-          .send({ message: "Invalid book ID", error: err.message });
+        res.status(400).send({ message: "Invalid book ID", error: err.message });
       }
     });
 
@@ -102,7 +127,9 @@ async function run() {
       res.send(result);
     });
 
-    // ===== Orders Routes =====
+    // =====================================================
+    //                   ORDERS ROUTES
+    // =====================================================
     app.get("/orders", async (req, res) => {
       const orders = await ordersCollection.find().toArray();
       res.send(orders);
@@ -115,23 +142,17 @@ async function run() {
         if (!order) return res.status(404).send({ message: "Order not found" });
         res.send(order);
       } catch (err) {
-        res
-          .status(400)
-          .send({ message: "Invalid order ID", error: err.message });
+        res.status(400).send({ message: "Invalid order ID", error: err.message });
       }
     });
 
     app.get("/orders/:email", async (req, res) => {
       const email = req.params.email;
       try {
-        const orders = await ordersCollection
-          .find({ $or: [{ email }, { userEmail: email }] })
-          .toArray();
+        const orders = await ordersCollection.find({ $or: [{ email }, { userEmail: email }] }).toArray();
         res.send(orders);
       } catch (err) {
-        res
-          .status(500)
-          .send({ message: "Failed to fetch orders", error: err.message });
+        res.status(500).send({ message: "Failed to fetch orders", error: err.message });
       }
     });
 
@@ -148,9 +169,7 @@ async function run() {
         const result = await ordersCollection.deleteOne({ _id });
         res.send(result);
       } catch (err) {
-        res
-          .status(400)
-          .send({ message: "Failed to delete order", error: err.message });
+        res.status(400).send({ message: "Failed to delete order", error: err.message });
       }
     });
 
@@ -160,31 +179,21 @@ async function run() {
       const { status = "cancelled" } = req.body;
       try {
         const _id = ObjectId.isValid(id) ? new ObjectId(id) : id;
-        const result = await ordersCollection.updateOne(
-          { _id },
-          { $set: { status } }
-        );
+        const result = await ordersCollection.updateOne({ _id }, { $set: { status } });
         res.send(result);
       } catch (err) {
-        res
-          .status(400)
-          .send({ message: "Failed to cancel order", error: err.message });
+        res.status(400).send({ message: "Failed to cancel order", error: err.message });
       }
     });
 
-    // Pay order + generate paymentId + create invoice
+    // Pay order + invoice
     app.patch("/orders/pay/:id", async (req, res) => {
       const id = req.params.id;
       try {
         const _id = ObjectId.isValid(id) ? new ObjectId(id) : id;
-
         const paymentId = `PAY-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
-        await ordersCollection.updateOne(
-          { _id },
-          { $set: { status: "success", paymentStatus: "paid", paymentId } }
-        );
-
+        await ordersCollection.updateOne({ _id }, { $set: { status: "success", paymentStatus: "paid", paymentId } });
         const paidOrder = await ordersCollection.findOne({ _id });
 
         await invoicesCollection.insertOne({
@@ -205,25 +214,48 @@ async function run() {
       }
     });
 
-    // Invoices
+    // =====================================================
+    //                   INVOICES ROUTES
+    // =====================================================
     app.get("/invoices/:email", async (req, res) => {
       const email = req.params.email;
       try {
-        const invoices = await invoicesCollection
-          .find({ $or: [{ email }, { userEmail: email }] })
-          .toArray();
+        const invoices = await invoicesCollection.find({ $or: [{ email }, { userEmail: email }] }).toArray();
         res.send(invoices);
       } catch (err) {
         res.status(500).send({ message: "Failed to fetch invoices" });
       }
     });
 
-    // Dashboard role
+    // =====================================================
+    //                   DASHBOARD
+    // =====================================================
     app.get("/dashboard/:role", async (req, res) => {
       const role = req.params.role;
       const users = await usersCollection.find({ role }).toArray();
       res.send({ message: `Dashboard data for ${role}`, data: users });
     });
+
+    // =====================================================
+    //                   DELIVERY REQUESTS
+    // =====================================================
+    app.get("/delivery-requests", async (req, res) => {
+      const result = await deliveryCollection.find().toArray();
+      res.send(result);
+    });
+
+    app.patch("/delivery-requests/approve/:id", async (req, res) => {
+      const id = req.params.id;
+      const result = await deliveryCollection.updateOne({ _id: new ObjectId(id) }, { $set: { status: "approved" } });
+      res.send(result);
+    });
+
+    app.patch("/delivery-requests/reject/:id", async (req, res) => {
+      const id = req.params.id;
+      const result = await deliveryCollection.updateOne({ _id: new ObjectId(id) }, { $set: { status: "rejected" } });
+      res.send(result);
+    });
+
   } catch (err) {
     console.error(err);
   }
