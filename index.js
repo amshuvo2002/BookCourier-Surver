@@ -45,13 +45,10 @@ async function run() {
     // ---------------------------
     app.post("/users", async (req, res) => {
       const { name, email, role = "user", photoURL } = req.body;
-
       if (!email) return res.status(400).send({ message: "Email required" });
 
       const existingUser = await usersCollection.findOne({ email });
-      if (existingUser) {
-        return res.send({ message: "User already exists", user: existingUser });
-      }
+      if (existingUser) return res.send({ message: "User already exists", user: existingUser });
 
       const result = await usersCollection.insertOne({
         name,
@@ -69,10 +66,8 @@ async function run() {
     // ---------------------------
     app.post("/register", async (req, res) => {
       const { name, email, password } = req.body;
-
       const existingUser = await usersCollection.findOne({ email });
-      if (existingUser)
-        return res.status(400).send({ message: "User already exists" });
+      if (existingUser) return res.status(400).send({ message: "User already exists" });
 
       const result = await usersCollection.insertOne({
         name,
@@ -114,17 +109,26 @@ async function run() {
     });
 
     // ---------------------------
+    // Get user role by email
+    // ---------------------------
+    app.get("/api/getRole", async (req, res) => {
+      const email = req.query.email;
+      if (!email) return res.status(400).send({ message: "Email required" });
+
+      const user = await usersCollection.findOne({ email });
+      if (!user) return res.status(404).send({ message: "User not found" });
+
+      res.send({ role: user.role });
+    });
+
+    // ---------------------------
     // Update user role
     // ---------------------------
     app.put("/users/role/:email", async (req, res) => {
       const email = req.params.email;
       const { role } = req.body;
 
-      const result = await usersCollection.updateOne(
-        { email },
-        { $set: { role } }
-      );
-
+      const result = await usersCollection.updateOne({ email }, { $set: { role } });
       res.send(result);
     });
 
@@ -134,16 +138,14 @@ async function run() {
     app.get("/users/info/:email", async (req, res) => {
       const email = req.params.email;
       const user = await usersCollection.findOne({ email });
-
       if (!user) return res.status(404).send({ message: "User not found" });
 
-      res.send({
-        name: user.name,
-        email: user.email,
-        role: user.role,
-      });
+      res.send({ name: user.name, email: user.email, role: user.role });
     });
+
+    // ---------------------------
     // Delete user by email
+    // ---------------------------
     app.delete("/users/:email", async (req, res) => {
       const email = req.params.email;
       const result = await usersCollection.deleteOne({ email });
@@ -162,8 +164,7 @@ async function run() {
       const id = req.params.id;
       try {
         let book = null;
-        if (ObjectId.isValid(id))
-          book = await booksCollection.findOne({ _id: new ObjectId(id) });
+        if (ObjectId.isValid(id)) book = await booksCollection.findOne({ _id: new ObjectId(id) });
         if (!book) book = await booksCollection.findOne({ _id: id });
         if (!book) return res.status(404).send({ message: "Book not found" });
         res.send(book);
@@ -188,9 +189,7 @@ async function run() {
 
     app.get("/orders/:email", async (req, res) => {
       const email = req.params.email;
-      const orders = await ordersCollection
-        .find({ $or: [{ email }, { userEmail: email }] })
-        .toArray();
+      const orders = await ordersCollection.find({ $or: [{ email }, { userEmail: email }] }).toArray();
       res.send(orders);
     });
 
@@ -202,23 +201,15 @@ async function run() {
 
     app.put("/orders/:id/cancel", async (req, res) => {
       const id = req.params.id;
-      const result = await ordersCollection.updateOne(
-        { _id: new ObjectId(id) },
-        { $set: { status: "cancelled" } }
-      );
+      const result = await ordersCollection.updateOne({ _id: new ObjectId(id) }, { $set: { status: "cancelled" } });
       res.send(result);
     });
 
     app.patch("/orders/pay/:id", async (req, res) => {
       const id = req.params.id;
       const paymentId = `PAY-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-      await ordersCollection.updateOne(
-        { _id: new ObjectId(id) },
-        { $set: { status: "success", paymentStatus: "paid", paymentId } }
-      );
-      const paidOrder = await ordersCollection.findOne({
-        _id: new ObjectId(id),
-      });
+      await ordersCollection.updateOne({ _id: new ObjectId(id) }, { $set: { status: "success", paymentStatus: "paid", paymentId } });
+      const paidOrder = await ordersCollection.findOne({ _id: new ObjectId(id) });
       await invoicesCollection.insertOne({
         orderId: paidOrder._id,
         userId: paidOrder.userId,
@@ -234,15 +225,6 @@ async function run() {
     });
 
     // ---------------------------
-    // Dashboard Route
-    // ---------------------------
-    app.get("/dashboard/:role", async (req, res) => {
-      const role = req.params.role;
-      const users = await usersCollection.find({ role }).toArray();
-      res.send({ message: `Dashboard data for ${role}`, data: users });
-    });
-
-    // ---------------------------
     // Delivery Requests
     // ---------------------------
     app.get("/delivery-requests", async (req, res) => {
@@ -252,21 +234,16 @@ async function run() {
 
     app.patch("/delivery-requests/approve/:id", async (req, res) => {
       const id = req.params.id;
-      const result = await deliveryCollection.updateOne(
-        { _id: new ObjectId(id) },
-        { $set: { status: "approved" } }
-      );
+      const result = await deliveryCollection.updateOne({ _id: new ObjectId(id) }, { $set: { status: "approved" } });
       res.send(result);
     });
 
     app.patch("/delivery-requests/reject/:id", async (req, res) => {
       const id = req.params.id;
-      const result = await deliveryCollection.updateOne(
-        { _id: new ObjectId(id) },
-        { $set: { status: "rejected" } }
-      );
+      const result = await deliveryCollection.updateOne({ _id: new ObjectId(id) }, { $set: { status: "rejected" } });
       res.send(result);
     });
+
   } catch (err) {
     console.error(err);
   }
@@ -274,4 +251,5 @@ async function run() {
 
 run().catch(console.dir);
 
+// Start Server
 app.listen(port, () => console.log(`Server running on port ${port}`));
