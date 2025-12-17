@@ -53,16 +53,18 @@ async function run() {
     });
 
     // =======================
-    // USERS
+    // USERS SECTION
     // =======================
 
+    // 👉 New user save (register / first login)
     app.post("/users", async (req, res) => {
       const { name, email, role = "user", photoURL } = req.body;
       if (!email) return res.status(400).send({ message: "Email required" });
 
       const existingUser = await usersCollection.findOne({ email });
-      if (existingUser)
+      if (existingUser) {
         return res.send({ message: "User already exists", user: existingUser });
+      }
 
       const result = await usersCollection.insertOne({
         name,
@@ -75,11 +77,38 @@ async function run() {
       res.send({ message: "User saved", result });
     });
 
+    // 👉 ✅ FIX: Get ALL users (AdminUsers.jsx এর জন্য)
+    app.get("/users", async (req, res) => {
+      const users = await usersCollection.find().toArray();
+      res.send(users);
+    });
+
+    // 👉 Get role by email (Navbar / role check)
     app.get("/api/getRole", async (req, res) => {
       const email = req.query.email;
       const user = await usersCollection.findOne({ email });
       if (!user) return res.status(404).send({ message: "User not found" });
       res.send({ role: user.role });
+    });
+
+    // 👉 Change user role (admin / librarian / user)
+    app.put("/users/role/:email", async (req, res) => {
+      const email = req.params.email;
+      const { role } = req.body;
+
+      const result = await usersCollection.updateOne(
+        { email },
+        { $set: { role } }
+      );
+
+      res.send(result);
+    });
+
+    // 👉 Delete user
+    app.delete("/users/:email", async (req, res) => {
+      const email = req.params.email;
+      const result = await usersCollection.deleteOne({ email });
+      res.send(result);
     });
 
     // =======================
@@ -119,6 +148,32 @@ async function run() {
       );
       res.send(result);
     });
+    // =======================
+    // DELETE BOOK
+    // =======================
+    app.delete("/books/:id", async (req, res) => {
+      const { id } = req.params;
+
+      if (!id) return res.status(400).send({ message: "Book ID missing" });
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({ message: "Invalid book ID" });
+      }
+
+      try {
+        const book = await booksCollection.findOne({ _id: new ObjectId(id) });
+        if (!book) return res.status(404).send({ message: "Book not found" });
+
+        const result = await booksCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+
+        res.send({ success: true, deletedCount: result.deletedCount });
+      } catch (err) {
+        console.error("Delete book error:", err);
+        res.status(500).send({ message: "Server error while deleting book" });
+      }
+    });
 
     // =======================
     // ORDERS
@@ -148,6 +203,18 @@ async function run() {
         })
       );
       res.send(ordersWithDelivery);
+    });
+
+    // NEW: Payment fetch route
+    app.get("/orders/payment/:id", async (req, res) => {
+      const { id } = req.params;
+      if (!ObjectId.isValid(id))
+        return res.status(400).send({ message: "Invalid order ID" });
+
+      const order = await ordersCollection.findOne({ _id: new ObjectId(id) });
+      if (!order) return res.status(404).send({ message: "Order not found" });
+
+      res.send(order);
     });
 
     // Cancel order (PATCH)
@@ -220,6 +287,56 @@ async function run() {
         _id: new ObjectId(id),
       });
       res.send(result);
+    });
+
+    // Delivery Requests Routes
+    app.get("/delivery-requests", async (req, res) => {
+      try {
+        const requests = await deliveryCollection.find().toArray();
+        res.send(requests);
+      } catch (err) {
+        console.error("Fetch delivery requests error:", err);
+        res.status(500).send({ message: "Server error" });
+      }
+    });
+
+    app.patch("/delivery-requests/:status/:id", async (req, res) => {
+      const { status, id } = req.params;
+
+      if (!ObjectId.isValid(id))
+        return res.status(400).send({ message: "Invalid ID" });
+
+      if (!["approved", "rejected"].includes(status))
+        return res.status(400).send({ message: "Invalid status" });
+
+      try {
+        const result = await deliveryCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status } }
+        );
+        res.send(result);
+      } catch (err) {
+        console.error("Update delivery request error:", err);
+        res.status(500).send({ message: "Server error" });
+      }
+    });
+
+    app.delete("/delivery-requests/:id", async (req, res) => {
+      const { id } = req.params;
+      if (!ObjectId.isValid(id))
+        return res.status(400).send({ message: "Invalid ID" });
+
+      try {
+        const result = await deliveryCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+        res.send(result);
+      } catch (err) {
+        console.error("Delete delivery request error:", err);
+        res
+          .status(500)
+          .send({ message: "Server error while deleting delivery request" });
+      }
     });
 
     // =======================
