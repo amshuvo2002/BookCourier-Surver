@@ -8,15 +8,11 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-// =======================
-// MIDDLEWARE
-// =======================
+
 app.use(cors());
 app.use(express.json());
 
-// =======================
-// MONGODB CONNECTION
-// =======================
+
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.sxesek9.mongodb.net/?retryWrites=true&w=majority`;
 
 const client = new MongoClient(uri, {
@@ -42,16 +38,12 @@ async function run() {
 
     console.log("MongoDB connected");
 
-    // =======================
-    // TEST ROUTE
-    // =======================
+
     app.get("/", (req, res) => {
       res.send("Library API running");
     });
 
-    // =======================
-    // USERS
-    // =======================
+    
     app.post("/users", async (req, res) => {
       try {
         const { name, email, role = "user", photoURL } = req.body;
@@ -128,9 +120,7 @@ async function run() {
       }
     });
 
-    // =======================
-    // BOOKS
-    // =======================
+    
     app.get("/books", async (req, res) => {
       try {
         const books = await booksCollection.find().toArray();
@@ -202,9 +192,7 @@ async function run() {
       }
     });
 
-    // =======================
-    // ORDERS
-    // =======================
+   
     app.get("/orders", async (req, res) => {
       try {
         const orders = await ordersCollection.find().toArray();
@@ -292,8 +280,7 @@ async function run() {
       }
     });
 
-    // এই দুইটা রুটই ঠিক করা হয়েছে (এখানেই তোমার সমস্যা ছিল)
-    // ১. মেইন স্ট্যাটাস চেঞ্জ রুট
+ 
     app.patch("/orders/:id/status", async (req, res) => {
       try {
         const { id } = req.params;
@@ -304,7 +291,7 @@ async function run() {
 
         const result = await ordersCollection.updateOne(
           { _id: new ObjectId(id) },
-          { $set: { orderStatus: status } } // এখানে orderStatus করা হয়েছে
+          { $set: { orderStatus: status } } 
         );
 
         if (result.matchedCount === 0) {
@@ -318,7 +305,7 @@ async function run() {
       }
     });
 
-    // ২. ক্যান্সেল রুটও ঠিক করা হয়েছে
+
     app.patch("/orders/cancel/:id", async (req, res) => {
       try {
         const { id } = req.params;
@@ -327,7 +314,7 @@ async function run() {
 
         const result = await ordersCollection.updateOne(
           { _id: new ObjectId(id) },
-          { $set: { orderStatus: "cancelled" } } // এখানেও orderStatus
+          { $set: { orderStatus: "cancelled" } } 
         );
 
         if (result.modifiedCount === 0) {
@@ -359,7 +346,6 @@ async function run() {
       }
     });
 
-    // পেমেন্টের জন্য অর্ডারের পুরো ডিটেইলস নেওয়ার রুট
     app.get("/orders/payment/:id", async (req, res) => {
       try {
         const { id } = req.params;
@@ -370,7 +356,6 @@ async function run() {
 
         if (!order) return res.status(404).send({ message: "Order not found" });
 
-        // বইয়ের ডিটেইলস যদি দরকার হয় তাহলে যোগ করতে পারো
         let bookTitle = order.bookTitle;
         let price = order.price;
 
@@ -395,9 +380,7 @@ async function run() {
       }
     });
 
-   
-    // =======================
-    // (delivery, wishlist, reviews – সব ঠিক আছে)
+  
 
     app.get("/delivery-requests", async (req, res) => {
       try {
@@ -503,7 +486,7 @@ async function run() {
         const hasOrdered = await ordersCollection.findOne({
           $or: [{ email }, { userEmail: email }],
           bookId,
-          orderStatus: "delivered", // এখানেও orderStatus করা হয়েছে
+          orderStatus: "delivered", 
         });
         if (!hasOrdered)
           return res.status(403).send({ message: "Order this book first" });
