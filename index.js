@@ -1,4 +1,5 @@
 const express = require("express");
+const admin = require("firebase-admin");
 const cors = require("cors");
 const dotenv = require("dotenv");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
@@ -8,10 +9,37 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 3000;
 
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+    }),
+  });
+}
 
 app.use(cors());
 app.use(express.json());
 
+
+const verifyToken = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).send({ message: "Unauthorized access" });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  try {
+    const decoded = await admin.auth().verifyIdToken(token);
+    req.user = decoded; 
+    next();
+  } catch (error) {
+    return res.status(401).send({ message: "Invalid or expired token" });
+  }
+};
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.sxesek9.mongodb.net/?retryWrites=true&w=majority`;
 
@@ -38,12 +66,12 @@ async function run() {
 
     console.log("MongoDB connected");
 
-
     app.get("/", (req, res) => {
       res.send("Library API running");
     });
 
-    
+    // ==================== USER ROUTES =====================
+
     app.post("/users", async (req, res) => {
       try {
         const { name, email, role = "user", photoURL } = req.body;
@@ -82,12 +110,13 @@ async function run() {
       }
     });
 
-    app.get("/api/getRole", async (req, res) => {
+    
+    app.get("/api/getRole", verifyToken, async (req, res) => {
       try {
-        const email = req.query.email;
+        const email = req.user.email;
         const user = await usersCollection.findOne({ email });
         if (!user) return res.status(404).send({ message: "User not found" });
-        res.send({ role: user.role });
+        res.send({ role: user.role || "user" });
       } catch (err) {
         console.error(err);
         res.status(500).send({ message: "Server error" });
@@ -120,7 +149,8 @@ async function run() {
       }
     });
 
-    
+    // ==================== BOOK ROUTES ====================
+
     app.get("/books", async (req, res) => {
       try {
         const books = await booksCollection.find().toArray();
@@ -192,7 +222,8 @@ async function run() {
       }
     });
 
-   
+    // ==================== ORDER ROUTES ====================
+
     app.get("/orders", async (req, res) => {
       try {
         const orders = await ordersCollection.find().toArray();
@@ -203,9 +234,13 @@ async function run() {
       }
     });
 
-    app.get("/orders/:email", async (req, res) => {
+    
+    app.get("/orders/:email", verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
+        if (req.user.email !== email) {
+          return res.status(403).send({ message: "You can only view your own orders" });
+        }
         const orders = await ordersCollection
           .find({ $or: [{ email }, { userEmail: email }] })
           .toArray();
@@ -234,14 +269,15 @@ async function run() {
       }
     });
 
-    app.post("/orders", async (req, res) => {
+   
+    app.post("/orders", verifyToken, async (req, res) => {
       try {
-        const order = req.body;
+        const order = { ...req.body, email: req.user.email };
         const orderResult = await ordersCollection.insertOne(order);
 
         await deliveryCollection.insertOne({
           orderId: orderResult.insertedId,
-          user: order.email || order.userEmail,
+          user: req.user.email,
           book: order.bookTitle,
           status: "pending",
           createdAt: new Date(),
@@ -280,7 +316,6 @@ async function run() {
       }
     });
 
- 
     app.patch("/orders/:id/status", async (req, res) => {
       try {
         const { id } = req.params;
@@ -291,7 +326,7 @@ async function run() {
 
         const result = await ordersCollection.updateOne(
           { _id: new ObjectId(id) },
-          { $set: { orderStatus: status } } 
+          { $set: { orderStatus: status } }
         );
 
         if (result.matchedCount === 0) {
@@ -305,22 +340,25 @@ async function run() {
       }
     });
 
-
-    app.patch("/orders/cancel/:id", async (req, res) => {
+   
+    app.patch("/orders/cancel/:id", verifyToken, async (req, res) => {
       try {
         const { id } = req.params;
         if (!ObjectId.isValid(id))
           return res.status(400).send({ message: "Invalid order ID" });
 
+        const order = await ordersCollection.findOne({ _id: new ObjectId(id) });
+        if (order.email !== req.user.email) {
+          return res.status(403).send({ message: "You can only cancel your own order" });
+        }
+
         const result = await ordersCollection.updateOne(
           { _id: new ObjectId(id) },
-          { $set: { orderStatus: "cancelled" } } 
+          { $set: { orderStatus: "cancelled" } }
         );
 
         if (result.modifiedCount === 0) {
-          return res
-            .status(404)
-            .send({ message: "Order not found or already cancelled" });
+          return res.status(404).send({ message: "Order not found or already cancelled" });
         }
 
         res.send({ success: true, message: "Order cancelled successfully" });
@@ -380,7 +418,7 @@ async function run() {
       }
     });
 
-  
+    // ==================== DELIVERY ROUTES ====================
 
     app.get("/delivery-requests", async (req, res) => {
       try {
@@ -423,15 +461,16 @@ async function run() {
         res.send(result);
       } catch (err) {
         console.error(err);
-        res
-          .status(500)
-          .send({ message: "Server error while deleting delivery request" });
+        res.status(500).send({ message: "Server error while deleting delivery request" });
       }
     });
 
-    app.post("/wishlist", async (req, res) => {
+    // ==================== WISHLIST ROUTES ====================
+
+    app.post("/wishlist", verifyToken, async (req, res) => {
       try {
-        const { email, bookId, title, img } = req.body;
+        const { bookId, title, img } = req.body;
+        const email = req.user.email;
         if (!email || !bookId)
           return res.status(400).send({ message: "Missing data" });
 
@@ -452,9 +491,9 @@ async function run() {
       }
     });
 
-    app.get("/wishlist", async (req, res) => {
+    app.get("/wishlist", verifyToken, async (req, res) => {
       try {
-        const email = req.query.email;
+        const email = req.user.email;
         const wishlist = await wishlistCollection.find({ email }).toArray();
         res.send(wishlist);
       } catch (err) {
@@ -463,11 +502,16 @@ async function run() {
       }
     });
 
-    app.delete("/wishlist/:id", async (req, res) => {
+    app.delete("/wishlist/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
         if (!ObjectId.isValid(id))
           return res.status(400).send({ message: "Invalid ID" });
+
+        const item = await wishlistCollection.findOne({ _id: new ObjectId(id) });
+        if (!item || item.email !== req.user.email) {
+          return res.status(403).send({ message: "Access denied" });
+        }
 
         const result = await wishlistCollection.deleteOne({
           _id: new ObjectId(id),
@@ -479,14 +523,17 @@ async function run() {
       }
     });
 
-    app.post("/reviews", async (req, res) => {
+    // ==================== REVIEW ROUTES ====================
+
+    app.post("/reviews", verifyToken, async (req, res) => {
       try {
-        const { bookId, email, rating, comment } = req.body;
+        const { bookId, rating, comment } = req.body;
+        const email = req.user.email;
 
         const hasOrdered = await ordersCollection.findOne({
           $or: [{ email }, { userEmail: email }],
           bookId,
-          orderStatus: "delivered", 
+          orderStatus: "delivered",
         });
         if (!hasOrdered)
           return res.status(403).send({ message: "Order this book first" });
