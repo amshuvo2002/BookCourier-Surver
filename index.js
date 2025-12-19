@@ -72,50 +72,34 @@ async function run() {
 
     // ==================== USER ROUTES =====================
 
- app.post("/users", async (req, res) => {
-  try {
-    const { name, email, role = "user", photoURL } = req.body;
-    if (!email) return res.status(400).send({ message: "Email required" });
 
-    const existingUser = await usersCollection.findOne({ email });
+    app.post("/users", async (req, res) => {
+      try {
+        const { name, email, role = "user", photoURL } = req.body;
+        if (!email) return res.status(400).send({ message: "Email required" });
 
-    // ✅ যদি আগে থেকেই থাকে → name ও photo update
-    if (existingUser) {
-      const updateResult = await usersCollection.updateOne(
-        { email },
-        {
-          $set: {
-            name: name || existingUser.name,
-            photoURL: photoURL || existingUser.photoURL,
-          },
+        const existingUser = await usersCollection.findOne({ email });
+        if (existingUser) {
+          return res.send({
+            message: "User already exists",
+            user: existingUser,
+          });
         }
-      );
 
-      return res.send({
-        message: "User updated",
-        modifiedCount: updateResult.modifiedCount,
-        user: await usersCollection.findOne({ email }),
-      });
-    }
+        const result = await usersCollection.insertOne({
+          name,
+          email,
+          role,
+          photoURL,
+          createdAt: new Date(),
+        });
 
-    // ✅ নতুন ইউজার হলে insert
-    const result = await usersCollection.insertOne({
-      name,
-      email,
-      role,
-      photoURL,
-      createdAt: new Date(),
+        res.send({ message: "User saved", result });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Server error" });
+      }
     });
-
-    res.send({ message: "User saved", result });
-  } catch (err) {
-    console.error(err);
-    res.status(500).send({ message: "Server error" });
-  }
-});
-
-
-  
 
     app.get("/users", async (req, res) => {
       try {
