@@ -14,11 +14,10 @@ const serviceAccount = JSON.parse(decoded);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
-})
+});
 
 app.use(cors());
 app.use(express.json());
-
 
 const verifyToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -48,8 +47,6 @@ const client = new MongoClient(uri, {
   },
 });
 
-
-
 async function run() {
   try {
     await client.connect();
@@ -62,7 +59,6 @@ async function run() {
     const deliveryCollection = db.collection("deliveryRequests");
     const wishlistCollection = db.collection("wishlist");
     const reviewsCollection = db.collection("reviews");
-    
 
     console.log("MongoDB connected");
 
@@ -72,7 +68,6 @@ async function run() {
 
     // ==================== USER ROUTES =====================
 
-
     app.post("/users", async (req, res) => {
       try {
         const { name, email, role = "user", photoURL } = req.body;
@@ -80,9 +75,13 @@ async function run() {
 
         const existingUser = await usersCollection.findOne({ email });
         if (existingUser) {
+          const updateResult = await usersCollection.updateOne(
+            { email },
+            { $set: { name, photoURL, updatedAt: new Date() } }
+          );
           return res.send({
-            message: "User already exists",
-            user: existingUser,
+            message: "User already exists, info updated",
+            user: { ...existingUser, name, photoURL },
           });
         }
 
@@ -111,13 +110,45 @@ async function run() {
       }
     });
 
-    
+ 
     app.get("/api/getRole", verifyToken, async (req, res) => {
       try {
         const email = req.user.email;
-        const user = await usersCollection.findOne({ email });
-        if (!user) return res.status(404).send({ message: "User not found" });
-        res.send({ role: user.role || "user" });
+        const firebaseUser = req.user;
+
+        let user = await usersCollection.findOne({ email });
+
+        if (!user) {
+     
+          const newUser = {
+            name: firebaseUser.name || firebaseUser.displayName || "User",
+            email: firebaseUser.email,
+            photoURL: firebaseUser.picture || firebaseUser.photoURL || null,
+            role: "user",
+            createdAt: new Date(),
+          };
+          const result = await usersCollection.insertOne(newUser);
+          user = { ...newUser, _id: result.insertedId };
+          console.log("New user auto-created:", email);
+        } else {
+        
+          const updateFields = {};
+          if ((firebaseUser.name || firebaseUser.displayName) && (firebaseUser.name || firebaseUser.displayName) !== user.name) {
+            updateFields.name = firebaseUser.name || firebaseUser.displayName;
+          }
+          if ((firebaseUser.picture || firebaseUser.photoURL) && (firebaseUser.picture || firebaseUser.photoURL) !== user.photoURL) {
+            updateFields.photoURL = firebaseUser.picture || firebaseUser.photoURL;
+          }
+
+          if (Object.keys(updateFields).length > 0) {
+            updateFields.updatedAt = new Date();
+            await usersCollection.updateOne({ email }, { $set: updateFields });
+            user = { ...user, ...updateFields };
+            console.log("User info updated:", email);
+          }
+        }
+
+        res.send({ role: user.role || "user", user });
       } catch (err) {
         console.error(err);
         res.status(500).send({ message: "Server error" });
@@ -235,7 +266,6 @@ async function run() {
       }
     });
 
-    
     app.get("/orders/:email", verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
@@ -270,7 +300,6 @@ async function run() {
       }
     });
 
-   
     app.post("/orders", verifyToken, async (req, res) => {
       try {
         const order = { ...req.body, email: req.user.email };
@@ -341,7 +370,6 @@ async function run() {
       }
     });
 
-   
     app.patch("/orders/cancel/:id", verifyToken, async (req, res) => {
       try {
         const { id } = req.params;
@@ -570,6 +598,7 @@ async function run() {
         res.status(500).send({ message: "Server error" });
       }
     });
+
   } catch (err) {
     console.error("MongoDB connection error:", err);
   }
@@ -578,4 +607,5 @@ async function run() {
 run().catch(console.dir);
 
 app.listen(port, () => console.log(`Server running on port ${port}`));
+
 module.exports = app;
